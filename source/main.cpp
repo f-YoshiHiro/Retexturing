@@ -8,13 +8,19 @@
 #include <iostream>
 #include <vector>
 
+#include "math_headers.h"
+
 using namespace cv;
+
+int HUGE_NUM = 10000;
+
+void show_point(cv::Mat* mat, int i, int j);
 
 int main(int argc, char** argv) 
 {
 	cv::Mat src, hsv, mask;
 
-	src = cv::imread("../../image/shape2.png");
+	src = cv::imread("../../image/Sim0000.png");
 	cv::cvtColor(src, hsv, CV_BGR2HSV);
 
 	//int offset = 50;
@@ -24,6 +30,77 @@ int main(int argc, char** argv)
 	//inRange(hsv, Scalar(31-offset, 165 - offset, 130 - offset), Scalar(51 + offset, 185 + offset, 150 + offset), mask);
 	//inRange(hsv, Scalar(160 - offset_low, 233 - offset_low, 214 - offset_low), Scalar(160+ offset_high, 233+ offset_high, 214+ offset_high), mask);
 	inRange(hsv, Scalar(82, 82, 82), Scalar(255, 255, 255), mask);
+
+	// search corner
+	EigenVector2i CornerTL, CornerTR, CornerBL, CornerBR;
+	ScalarType LNormMIN = 10000.0;	ScalarType RNormMIN = 10000.0;
+	ScalarType LNormMAX = 0.0;		ScalarType RNormMAX = 0.0;
+
+	CornerTL[0] = HUGE_NUM; CornerTL[1] = HUGE_NUM;
+	CornerTR[0] = HUGE_NUM; CornerTR[1] = HUGE_NUM;
+	CornerBR[0] = 0;        CornerBR[1] = 0;
+	CornerBL[0] = 0;        CornerBL[1] = 0;
+
+	for (int i = 0; i < src.rows; i++) // rows
+	{
+		for (int j = 0; j < src.cols; j++) // cols
+		{
+			Vec3b bgr = src.at<Vec3b>(i,j);
+
+			// skip judge
+			bool skip_flag = true;
+
+			if (bgr != cv::Vec3b(0, 0, 0)) { skip_flag = false; }
+
+			// search corner
+			if (skip_flag == false)
+			{
+				// comp norm
+				int cols = src.cols;
+				ScalarType LNorm = sqrt( (i*i) + (j*j));
+				ScalarType RNorm = sqrt((i*i) + ((j-cols)*(j-cols)));
+
+
+				if (LNorm < LNormMIN)
+				{
+					LNormMIN = LNorm;
+					CornerTL[0] = i;	CornerTL[1] = j;
+				}
+				else if (LNorm > LNormMAX)
+				{
+					LNormMAX = LNorm;
+					CornerBR[0] = i;	CornerBR[1] = j;
+				}
+
+				if (RNorm < RNormMIN)
+				{
+					RNormMIN = RNorm;
+					CornerTR[0] = i;	CornerTR[1] = j;
+				}
+				else if (RNorm > RNormMAX)
+				{
+					RNormMAX = RNorm;
+					CornerBL[0] = i;	CornerBL[1] = j;
+				}
+			}
+		}
+	}
+
+	//CornerTR[0] = CornerTL[0];	CornerTR[1] = CornerBR[1];
+	//CornerBL[0] = CornerBR[0];  CornerBL[1] = CornerTL[1];
+
+
+	std::cout << "CornerTL" << std::endl;	std::cout << CornerTL << std::endl;
+	std::cout << "CornerTR" << std::endl;	std::cout << CornerTR << std::endl;
+	std::cout << "CornerBL" << std::endl;	std::cout << CornerBL << std::endl;
+	std::cout << "CornerBR" << std::endl;	std::cout << CornerBR << std::endl;
+
+	
+	show_point(&src, CornerTL[0], CornerTL[1]);
+	show_point(&src, CornerTR[0], CornerTR[1]);
+	show_point(&src, CornerBL[0], CornerBL[1]);
+	show_point(&src, CornerBR[0], CornerBR[1]);
+
 
 	cv::namedWindow("src", cv::WINDOW_AUTOSIZE);
 	imshow("src", src);
@@ -130,4 +207,20 @@ int main(int argc, char** argv)
 	//imwrite("../../image/output.bmp", im);
 
 	return 0;
+}
+
+void show_point(cv::Mat* mat,int i, int j)
+{
+	Vec3b color_bgr = (0,0,255);
+	int size = 3;
+
+	for (int height = i-size; height < i+size; height++)
+	{
+		Vec3b* ptr = mat->ptr<Vec3b>(height);
+
+		for (int width = j-size; width < j+size; width++)
+		{
+			ptr[width] = color_bgr;
+		}
+	}
 }

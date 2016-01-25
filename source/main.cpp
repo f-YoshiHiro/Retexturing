@@ -14,8 +14,8 @@
 using namespace cv;
 
 // -----------global---------- //
-Mat mat00H, mat19H;
-Mat Gmat00H;
+Mat mat00H;
+Mat Gmat00H, Gmat19H;
 
 int HUGE_NUM = 10000;
 
@@ -29,15 +29,18 @@ std::vector<Point> vertVec;
 void load_images();
 
 void search_corners(Mat* mat, Point* TL, Point* TR, Point* BL, Point* BR);
-
 void gen_mesh(EigenMatrixXi* V, EigenMatrixXi* T, Point TL, Point TR, Point BL, Point BR, int NUM_Y, int NUM_X);
 
+// draw func
 void draw_vert(Mat* mat, EigenMatrixXi* V, int radius=3, Scalar color = (Vec3b(255, 0, 0)));
 void draw_tri(Mat* mat, Point p1, Point p2, Point p3, Scalar color=(Vec3b(255,0,255)), int thickness=1);
 void draw_mesh(Mat* mat, EigenMatrixXi* V, EigenMatrixXi* T, int NUM_Y, int NUM_X);
 
-void compute_GlobalTransformation(const Mat* mat_old, const Mat* mat_new, EigenVector2i d);
+// core func
+void compute_InterporationWeight(EigenMatrixXi* V, EigenMatrixXi* T, EigenMatrixXs* B, Point TL, Point TR, Point BL, Point BR);
+void compute_GlobalTransformation(const Mat* mat_old, const Mat* mat_new, Vec2b d);
 
+// mathematical func
 unsigned char compute_GDerivativeX(const Mat* mat, int y, int x, int size = 3);
 unsigned char compute_GDerivativeY(const Mat* mat, int y, int x, int size = 3);
 unsigned char compute_GDerivativeT(const Mat* mat_old, const Mat* mat_new, int y, int x, int size = 3);
@@ -46,6 +49,8 @@ Vec3b compute_DerivativeX(const Mat* mat, int y, int x, int size = 3);
 Vec3b compute_DerivativeY(const Mat* mat, int y, int x, int size = 3);
 Vec3b compute_DerivativeT(const Mat* mat_old, const Mat* mat_new, int y, int x, int size = 3);
 
+void compute_BarycentricCoordinates(ScalarType* w1, ScalarType* w2, ScalarType* w3, Point t1, Point t2, Point t3, Point p);
+
 // ----------main---------- //
 int main(int argc, char** argv) 
 {
@@ -53,6 +58,8 @@ int main(int argc, char** argv)
 	Point TL, TR, BL, BR;	// corners
 	EigenMatrixXi V;	// vertices
 	EigenMatrixXi T;	// triangles
+	EigenMatrixXs B;	// weight
+	Vec2b d;
 
 	// load image
 	load_images();
@@ -62,6 +69,10 @@ int main(int argc, char** argv)
 
 	// generate mesh
 	gen_mesh(&V, &T, TL, TR, BL, BR, num_Y, num_X);
+	compute_InterporationWeight(&V, &T, &B, TL, TR, BL, BR);
+
+	// core
+	//compute_GlobalTransformation(&Gmat00H, &Gmat19H, d);
 
 	// draw
 	draw_mesh(&Gmat00H, &V, &T, num_Y, num_X);
@@ -70,8 +81,11 @@ int main(int argc, char** argv)
 	cv::namedWindow("src", cv::WINDOW_AUTOSIZE);
 	imshow("src", mat00H);
 
-	cv::namedWindow("gray", cv::WINDOW_AUTOSIZE);
-	imshow("gray", Gmat00H);
+	cv::namedWindow("G00", cv::WINDOW_AUTOSIZE);
+	imshow("G00", Gmat00H);
+
+	cv::namedWindow("G19", cv::WINDOW_AUTOSIZE);
+	imshow("G19", Gmat19H);
 
 	{
 		//// test del
@@ -114,9 +128,9 @@ int main(int argc, char** argv)
 void load_images()
 {
 	mat00H = cv::imread("../../image/Sim0000H.png");
-	mat19H = cv::imread("../../image/Sim0019H.png");
 
 	Gmat00H = cv::imread("../../image/Sim0000H.png", IMREAD_GRAYSCALE);
+	Gmat19H = cv::imread("../../image/Sim0019H.png", IMREAD_GRAYSCALE);
 }
 
 // -------------------------------------------------- //
@@ -301,33 +315,116 @@ void draw_mesh(Mat* mat, EigenMatrixXi* V, EigenMatrixXi* T, int NUM_Y, int NUM_
 }
 
 // -------------------------------------------------- //
+// Compute Interporation Weight
+// -------------------------------------------------- //
+void compute_InterporationWeight(EigenMatrixXi* V, EigenMatrixXi* T, EigenMatrixXs* B, Point TL, Point TR, Point BL, Point BR)
+{
+	int PixelNum_Y = BL.y - TL.y;	// ignore bottom line
+	int PixelNum_X = TR.x - TL.x;	// ignore right line
+
+	B->resize(PixelNum_Y*PixelNum_X, 3);
+
+	int u_count = 0;
+	int d_count = 0;
+
+	// loop for tri
+	for (int i = 0; i < T->rows(); i++)
+	{
+		Point p1, p2, p3;
+		Point pb;	// bary center
+		p1.y = (*V)((*T)(i, 0), 0);		p1.x = (*V)((*T)(i, 0), 1);
+		p2.y = (*V)((*T)(i, 1), 0);		p2.x = (*V)((*T)(i, 1), 1);
+		p3.y = (*V)((*T)(i, 2), 0);		p3.x = (*V)((*T)(i, 2), 1);
+
+		pb.y = (int)(((double)(p1.y + p2.y + p3.y)) / 3.0);
+		pb.x = (int)(((double)(p1.x + p2.x + p3.x)) / 3.0);
+
+		if ((i%2)==0)	// upper tri
+		{
+			for (int y = p1.y; y < p3.y; y++)
+			{
+				for (int x = p1.x; x < p2.x; x++)
+				{
+					if((x-p1.x)>=(y-p1.y))
+					{
+						//std::cout << "NUM:" << (p3.y-p1.y+1)*(p2.x-p1.x+1) << std::endl;
+						//Point p;
+						//p.y = y;	p.x = x;
+						//ScalarType w1, w2, w3;
+						//compute_BarycentricCoordinates(&w1,&w2,&w3,p1,p2,p3,p);
+					}
+				}
+			}
+
+			u_count += 1;
+		}
+		else    // dower tri
+		{
+			d_count += 1;
+		}
+	}
+
+	std::cout << "U_NUM:" << u_count << std::endl;
+	std::cout << "D_NUM:" << d_count << std::endl;
+}
+
+// -------------------------------------------------- //
 // Compute Global Transformation
 // -------------------------------------------------- //
-void compute_GlobalTransformation(const Mat* mat_old, const Mat* mat_new, EigenVector2i d)
+void compute_GlobalTransformation(const Mat* mat_old, const Mat* mat_new, Vec2b d)
 {
 	if(((mat_old->rows)!=(mat_new->rows))|| ((mat_old->cols) != (mat_new->cols)))
 	{
 		std::cerr << "mat size is different compute_GlobalTransformation" << std::endl;
 	}
 
+	// variable
+	SparseMatrix A, ATA;
+	VectorX b, x;
+	std::vector<unsigned char> bVec;				bVec.clear();
 	std::vector<SparseMatrixTriplet> a_triplets;	a_triplets.clear();
+	Eigen::SimplicialLLT<SparseMatrix, Eigen::Upper> llt_solver;
+	int count = 0;
 
 	for (int y = 1; y < mat_old->rows-1; y++)
 	{
 		for (int x = 1; x < mat_old->cols-1; x++)
 		{
-			Vec3b delY = compute_DerivativeY(mat_new, y, x);
-			Vec3b delX = compute_DerivativeX(mat_new, y, x);
-			Vec3b zero;
+			unsigned char delY = compute_GDerivativeY(mat_new, y, x);
+			unsigned char delX = compute_GDerivativeX(mat_new, y, x);
+			unsigned char zero = 0;
 
-			/*if ((delY!=(Vec3b)(0,0,0))&&(delX!=(Vec3b)(0,0,0)))
+			if ((delY != zero)&&(delX != zero))
 			{
+				unsigned char delT = compute_GDerivativeT(mat_old, mat_new, y, x);
+				bVec.push_back(delT);
 
-			}*/
+				a_triplets.push_back(SparseMatrixTriplet(count, 1, (double)delY));
+				a_triplets.push_back(SparseMatrixTriplet(count, 0, (double)delX));
+
+				count += 1;
+			}
 		}
 	}
 
+	A.resize(count, 2);
+	A.setFromTriplets(a_triplets.begin(), a_triplets.end());
 
+	b.resize(count);
+	for (int i = 0; i < b.size(); ++i)
+	{
+		b(i) = (double)bVec[i];
+	}
+	b = (-1)*(A.transpose())*b;
+
+	ATA = A.transpose() * A;
+	factorizeDirectSolverLLT(ATA, llt_solver);
+
+	x.resize(2);
+	x = llt_solver.solve(b);
+
+	std::cout << "x=" << std::endl;
+	std::cout << x << std::endl;
 }
 
 // -------------------------------------------------- //
@@ -406,5 +503,21 @@ Vec3b compute_DerivativeT(const Mat* mat_old, const Mat* mat_new, int y, int x, 
 	Vec3b value = pixel_new - pixel_old;
 
 	return value;
+}
+
+// -------------------------------------------------- //
+// Compute Barycentric Coorsinates
+//
+// weight: w1, w2, w3
+// tri   : t1, t2, t3
+// point : p
+// -------------------------------------------------- //
+void compute_BarycentricCoordinates(ScalarType* w1, ScalarType* w2, ScalarType* w3, Point t1, Point t2, Point t3, Point p)
+{
+	ScalarType denominator = ((t2.y-t3.y)*(t1.x-t3.x)) + ((t3.x-t2.x)*(t1.y-t3.y));
+
+	*w1 = (((t2.y-t3.y)*(p.x-t3.x)) + ((t3.x-t2.x)*(p.y-t3.y))) / denominator;
+	*w2 = (((t3.y-t1.y)*(p.x-t3.x)) + ((t1.x-t3.x)*(p.y-t3.y))) / denominator;
+	*w3 = 1.0 - *w1 - *w2;
 }
 #pragma endregion

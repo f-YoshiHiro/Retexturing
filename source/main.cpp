@@ -9,6 +9,8 @@
 #include <vector>
 
 #include "math_headers.h"
+#include "triangle.h"
+#include "pixel.h"
 
 // ----------name space---------- //
 using namespace cv;
@@ -16,13 +18,16 @@ using namespace cv;
 // -----------global---------- //
 Mat mat00H;
 Mat Gmat00H, Gmat19H;
+Mat Gmat00M;
 
 int HUGE_NUM = 10000;
 
 int num_X = 5;
 int num_Y = 5;
 
-std::vector<Point> vertVec;
+std::vector<Triangle> TriVec;
+
+//std::vector<Point> vertVec;
 
 
 // ----------functions---------- //
@@ -32,12 +37,12 @@ void search_corners(Mat* mat, Point* TL, Point* TR, Point* BL, Point* BR);
 void gen_mesh(EigenMatrixXi* V, EigenMatrixXi* T, Point TL, Point TR, Point BL, Point BR, int NUM_Y, int NUM_X);
 
 // draw func
-void draw_vert(Mat* mat, EigenMatrixXi* V, int radius=3, Scalar color = (Vec3b(255, 0, 0)));
+void draw_vert(Mat* mat, EigenMatrixXi* V, int radius=2, Scalar color = (Vec3b(255, 0, 0)));
 void draw_tri(Mat* mat, Point p1, Point p2, Point p3, Scalar color=(Vec3b(255,0,255)), int thickness=1);
 void draw_mesh(Mat* mat, EigenMatrixXi* V, EigenMatrixXi* T, int NUM_Y, int NUM_X);
 
 // core func
-void compute_InterporationWeight(EigenMatrixXi* V, EigenMatrixXi* T, EigenMatrixXs* B, Point TL, Point TR, Point BL, Point BR);
+void compute_InterporationWeight(EigenMatrixXi* V, EigenMatrixXi* T, std::vector<EigenMatrixXs>* BVec, Point TL, Point TR, Point BL, Point BR);
 void compute_GlobalTransformation(const Mat* mat_old, const Mat* mat_new, Vec2b d);
 
 // mathematical func
@@ -51,6 +56,8 @@ Vec3b compute_DerivativeT(const Mat* mat_old, const Mat* mat_new, int y, int x, 
 
 void compute_BarycentricCoordinates(ScalarType* w1, ScalarType* w2, ScalarType* w3, Point t1, Point t2, Point t3, Point p);
 
+int cross_product(Point p1, Point p2);
+
 // ----------main---------- //
 int main(int argc, char** argv) 
 {
@@ -58,7 +65,8 @@ int main(int argc, char** argv)
 	Point TL, TR, BL, BR;	// corners
 	EigenMatrixXi V;	// vertices
 	EigenMatrixXi T;	// triangles
-	EigenMatrixXs B;	// weight
+	//EigenMatrixXs B;	// weight
+	std::vector<EigenMatrixXs> BVec; // weight
 	Vec2b d;
 
 	// load image
@@ -69,7 +77,7 @@ int main(int argc, char** argv)
 
 	// generate mesh
 	gen_mesh(&V, &T, TL, TR, BL, BR, num_Y, num_X);
-	compute_InterporationWeight(&V, &T, &B, TL, TR, BL, BR);
+	compute_InterporationWeight(&V, &T, &BVec, TL, TR, BL, BR);
 
 	// core
 	//compute_GlobalTransformation(&Gmat00H, &Gmat19H, d);
@@ -131,6 +139,8 @@ void load_images()
 
 	Gmat00H = cv::imread("../../image/Sim0000H.png", IMREAD_GRAYSCALE);
 	Gmat19H = cv::imread("../../image/Sim0019H.png", IMREAD_GRAYSCALE);
+
+	Gmat00M = cv::imread("../../image/Sim0000M.png", IMREAD_GRAYSCALE);
 }
 
 // -------------------------------------------------- //
@@ -251,23 +261,31 @@ void gen_mesh(EigenMatrixXi* V, EigenMatrixXi* T, Point TL, Point TR, Point BL, 
 	}
 
 	// generate tri
+	TriVec.clear();
 	for (int y = 0; y < NUM_Y-1; y++)
 	{
 		for (int x = 0; x < NUM_X-1; x++)
 		{
 			int triIndex;
 
+			// upper tri
 			triIndex = ( (((NUM_X - 1)*y) + x) * 2 )+0;
 			(*T)(triIndex, 0) = (NUM_X*y)     + x;
 			(*T)(triIndex, 1) = (NUM_X*y)     + (x+1);
 			(*T)(triIndex, 2) = (NUM_X*(y+1)) + (x+1);
+			Triangle u_tri(triIndex, (NUM_X*y) + x, (NUM_X*y) + (x + 1), (NUM_X*(y + 1)) + (x + 1));
+			TriVec.push_back(u_tri);
 
+			// down tri
 			triIndex = ((((NUM_X - 1)*y) + x) * 2) + 1;
 			(*T)(triIndex, 0) = (NUM_X*y)     + x;
-			(*T)(triIndex, 2) = (NUM_X*(y+1)) + (x + 1);
-			(*T)(triIndex, 1) = (NUM_X*(y+1)) + x;
+			(*T)(triIndex, 1) = (NUM_X*(y+1)) + (x + 1);
+			(*T)(triIndex, 2) = (NUM_X*(y+1)) + x;
+			Triangle d_tri(triIndex, (NUM_X*y) + x, (NUM_X*(y + 1)) + (x + 1), (NUM_X*(y + 1)) + x);
+			TriVec.push_back(d_tri);
 		}
 	}
+	std::cout << "Num TriVec" << TriVec.size() << std::endl;
 }
 
 // -------------------------------------------------- //
@@ -317,55 +335,89 @@ void draw_mesh(Mat* mat, EigenMatrixXi* V, EigenMatrixXi* T, int NUM_Y, int NUM_
 // -------------------------------------------------- //
 // Compute Interporation Weight
 // -------------------------------------------------- //
-void compute_InterporationWeight(EigenMatrixXi* V, EigenMatrixXi* T, EigenMatrixXs* B, Point TL, Point TR, Point BL, Point BR)
+void compute_InterporationWeight(EigenMatrixXi* V, EigenMatrixXi* T, std::vector<EigenMatrixXs>* BVec, Point TL, Point TR, Point BL, Point BR)
 {
 	int PixelNum_Y = BL.y - TL.y;	// ignore bottom line
 	int PixelNum_X = TR.x - TL.x;	// ignore right line
 
-	B->resize(PixelNum_Y*PixelNum_X, 3);
+	BVec->clear();
 
-	int u_count = 0;
-	int d_count = 0;
+		// for debag
+		//int u_count = 0;	int d_count = 0;
 
 	// loop for tri
-	for (int i = 0; i < T->rows(); i++)
+	for (int i = 0; i < TriVec.size(); i++)
 	{
+		int i1 = TriVec[i].get_i1();
+		int i2 = TriVec[i].get_i2();
+		int i3 = TriVec[i].get_i3();
+
 		Point p1, p2, p3;
-		Point pb;	// bary center
-		p1.y = (*V)((*T)(i, 0), 0);		p1.x = (*V)((*T)(i, 0), 1);
-		p2.y = (*V)((*T)(i, 1), 0);		p2.x = (*V)((*T)(i, 1), 1);
-		p3.y = (*V)((*T)(i, 2), 0);		p3.x = (*V)((*T)(i, 2), 1);
+		p1.y = (*V)(i1, 0);		p1.x = (*V)(i1, 1);
+		p2.y = (*V)(i2, 0);		p2.x = (*V)(i2, 1);
+		p3.y = (*V)(i3, 0);		p3.x = (*V)(i3, 1);
 
-		pb.y = (int)(((double)(p1.y + p2.y + p3.y)) / 3.0);
-		pb.x = (int)(((double)(p1.x + p2.x + p3.x)) / 3.0);
+		int min_y = min(p2.y, p3.y);
+		int min_x = min(p1.x, p3.x);
+		int max_y = min(p1.y, p2.y);
+		int max_x = min(p2.x, p3.x);
 
-		if ((i%2)==0)	// upper tri
+		for (int y = p1.y; y <= p3.y; y++)
 		{
-			for (int y = p1.y; y < p3.y; y++)
+			for (int x = p1.x; x <= p2.x; x++)
 			{
-				for (int x = p1.x; x < p2.x; x++)
+				Point pixel;
+				pixel.y = y;
+				pixel.x = x;
+
+				Point v12(p2 - p1);
+				Point v23(p3 - p2);
+				Point v31(p1 - p3);
+				Point v1P(pixel - p1);
+				Point v2P(pixel - p2);
+				Point v3P(pixel - p3);
+
+				int Cross121P = cross_product(v12, v1P);
+				int Cross232P = cross_product(v23, v2P);
+				int Cross313P = cross_product(v31, v3P);
+				//std::cout << "121P:" << Cross121P << std::endl;
+				//std::cout << "232P:" << Cross232P << std::endl;
+				//std::cout << "313P:" << Cross313P << std::endl;
+
+				if ((Cross121P>=0) && (Cross232P>=0) && (Cross313P>=0))
 				{
-					if((x-p1.x)>=(y-p1.y))
-					{
-						//std::cout << "NUM:" << (p3.y-p1.y+1)*(p2.x-p1.x+1) << std::endl;
-						//Point p;
-						//p.y = y;	p.x = x;
-						//ScalarType w1, w2, w3;
-						//compute_BarycentricCoordinates(&w1,&w2,&w3,p1,p2,p3,p);
-					}
+					ScalarType w1, w2, w3;
+					compute_BarycentricCoordinates(&w1,&w2,&w3,p1,p2,p3,pixel);
+					Pixel pixel(pixel, w1, w2, w3);
+					TriVec[i].push_back_pixel(pixel);
 				}
 			}
-
-			u_count += 1;
-		}
-		else    // dower tri
-		{
-			d_count += 1;
 		}
 	}
 
-	std::cout << "U_NUM:" << u_count << std::endl;
-	std::cout << "D_NUM:" << d_count << std::endl;
+		// for debag
+		//std::cout << "U_NUM:" << u_count << std::endl;
+		//std::cout << "D_NUM:" << d_count << std::endl;
+
+		for (int i = 0; i < TriVec.size(); i++)
+		{
+			std::cout << "Tri["<< i << "]:" << TriVec[i].get_PixelNum() << std::endl;
+		}
+
+		for (int j = 0; j < TriVec[0].get_PixelNum(); ++j) 
+		{
+			Point pos = TriVec[0].get_PixelPos(j);
+			circle(Gmat00H, pos, 0, Scalar(Vec3b(200, 0, 0)), -1, 8, 0);
+		}
+
+		Point p1, p2, p3;
+		int i = 0;
+		p1.y = (*V)((*T)(i, 0), 0);		p1.x = (*V)((*T)(i, 0), 1);
+		p2.y = (*V)((*T)(i, 1), 0);		p2.x = (*V)((*T)(i, 1), 1);
+		p3.y = (*V)((*T)(i, 2), 0);		p3.x = (*V)((*T)(i, 2), 1);
+		//circle(Gmat00H, p1, 5, Scalar(Vec3b(0, 0, 0)), -1, 8, 0);
+		//circle(Gmat00H, p2, 5, Scalar(Vec3b(0, 0, 0)), -1, 8, 0);
+		//circle(Gmat00H, p3, 5, Scalar(Vec3b(0, 0, 0)), -1, 8, 0);
 }
 
 // -------------------------------------------------- //
@@ -519,5 +571,13 @@ void compute_BarycentricCoordinates(ScalarType* w1, ScalarType* w2, ScalarType* 
 	*w1 = (((t2.y-t3.y)*(p.x-t3.x)) + ((t3.x-t2.x)*(p.y-t3.y))) / denominator;
 	*w2 = (((t3.y-t1.y)*(p.x-t3.x)) + ((t1.x-t3.x)*(p.y-t3.y))) / denominator;
 	*w3 = 1.0 - *w1 - *w2;
+}
+
+// -------------------------------------------------- //
+// Compute Cross Product
+// -------------------------------------------------- //
+int cross_product(Point p1, Point p2)
+{
+	return ((p1.x*p2.y) - (p1.y*p2.x));
 }
 #pragma endregion

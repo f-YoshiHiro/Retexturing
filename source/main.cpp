@@ -11,6 +11,7 @@
 #include "math_headers.h"
 #include "triangle.h"
 #include "pixel.h"
+#include "mesh.h"
 
 // ----------name space---------- //
 using namespace cv;
@@ -20,26 +21,11 @@ Mat mat00H;
 Mat Gmat00H, Gmat19H;
 Mat Gmat00M;
 
-int HUGE_NUM = 10000;
-
 int num_X = 5;
 int num_Y = 5;
 
-std::vector<Triangle> TriVec;
-
-//std::vector<Point> vertVec;
-
-
 // ----------functions---------- //
 void load_images();
-
-void search_corners(Mat* mat, Point* TL, Point* TR, Point* BL, Point* BR);
-void gen_mesh(EigenMatrixXi* V, EigenMatrixXi* T, Point TL, Point TR, Point BL, Point BR, int NUM_Y, int NUM_X);
-
-// draw func
-void draw_vert(Mat* mat, EigenMatrixXi* V, int radius=2, Scalar color = (Vec3b(255, 0, 0)));
-void draw_tri(Mat* mat, Point p1, Point p2, Point p3, Scalar color=(Vec3b(255,0,255)), int thickness=1);
-void draw_mesh(Mat* mat, EigenMatrixXi* V, EigenMatrixXi* T, int NUM_Y, int NUM_X);
 
 // core func
 void compute_InterporationWeight(EigenMatrixXi* V, EigenMatrixXi* T, std::vector<EigenMatrixXs>* BVec, Point TL, Point TR, Point BL, Point BR);
@@ -62,9 +48,6 @@ int cross_product(Point p1, Point p2);
 int main(int argc, char** argv) 
 {
 	// variable
-	Point TL, TR, BL, BR;	// corners
-	EigenMatrixXi V;	// vertices
-	EigenMatrixXi T;	// triangles
 	//EigenMatrixXs B;	// weight
 	std::vector<EigenMatrixXs> BVec; // weight
 	Vec2b d;
@@ -72,19 +55,16 @@ int main(int argc, char** argv)
 	// load image
 	load_images();
 
-	// search corner
-	search_corners(&Gmat00H, &TL, &TR, &BL, &BR);
-
 	// generate mesh
-	gen_mesh(&V, &T, TL, TR, BL, BR, num_Y, num_X);
-	compute_InterporationWeight(&V, &T, &BVec, TL, TR, BL, BR);
+	Mesh mesh(&Gmat00H, num_X, num_Y);
+	//compute_InterporationWeight(&V, &T, &BVec, TL, TR, BL, BR);
 
 	// core
 	//compute_GlobalTransformation(&Gmat00H, &Gmat19H, d);
 
 	// draw
-	draw_mesh(&Gmat00H, &V, &T, num_Y, num_X);
-	draw_vert(&Gmat00H, &V);
+	mesh.draw_mesh(&Gmat00H);
+	mesh.draw_vert(&Gmat00H);
 
 	cv::namedWindow("src", cv::WINDOW_AUTOSIZE);
 	imshow("src", mat00H);
@@ -144,281 +124,92 @@ void load_images()
 }
 
 // -------------------------------------------------- //
-// Search Corners
-//
-// mat:image
-// TL: top left
-// TR: top right
-// BL: bottom left
-// BR: bottom right
-// -------------------------------------------------- //
-void search_corners(Mat* mat, Point* TL, Point* TR, Point* BL, Point* BR)
-{
-	// init
-	TL->y = HUGE_NUM;	TL->x = HUGE_NUM;
-	TR->y = HUGE_NUM;	TR->x = HUGE_NUM;
-	BR->y = 0;			BR->x = 0;
-	BL->y = 0;			BL->x = 0;
-
-	ScalarType LNormMIN = 10000.0;	ScalarType RNormMIN = 10000.0;
-	ScalarType LNormMAX = 0.0;		ScalarType RNormMAX = 0.0;
-
-	for (int y = 0; y < mat->rows; y++) // rows
-	{
-		for (int x = 0; x < mat->cols; x++) // cols
-		{
-			unsigned char pixel = mat->at<unsigned char>(y, x);
-
-			// skip judge
-			bool skip_flag = true;
-
-			if (pixel != (unsigned char)0) { skip_flag = false; }
-
-			// search corner
-			if (skip_flag == false)
-			{
-				// comp norm
-				int cols = mat->cols;
-				ScalarType LNorm = sqrt((y*y) + (x*x));
-				ScalarType RNorm = sqrt((y*y) + ((x - cols)*(x - cols)));
-
-
-				if (LNorm < LNormMIN)
-				{
-					LNormMIN = LNorm;
-					TL->y = y;	TL->x = x;
-				}
-				else if (LNorm > LNormMAX)
-				{
-					LNormMAX = LNorm;
-					BR->y = y;	BR->x = x;
-				}
-
-				if (RNorm < RNormMIN)
-				{
-					RNormMIN = RNorm;
-					TR->y = y;	TR->x = x;
-				}
-				else if (RNorm > RNormMAX)
-				{
-					RNormMAX = RNorm;
-					BL->y = y;	BL->x = x;
-				}
-			}
-		}
-	}
-	std::cout << "Corners" << std::endl;
-	std::cout << "TL:" << TL->y << "," << TL->x <<std::endl;
-	std::cout << "TR:" << TR->y << "," << TR->x <<std::endl;
-	std::cout << "BL:" << BL->y << "," << BL->x <<std::endl;
-	std::cout << "BR:" << BR->y << "," << BR->x <<std::endl;
-
-	int rudius = 3;
-	//circle(*mat, *TL, rudius, (Vec3b(255, 0, 0)), -1, 8, 0);
-	//circle(*mat, *TR, rudius, (Vec3b(255, 0, 0)), -1, 8, 0);
-	//circle(*mat, *BL, rudius, (Vec3b(255, 0, 0)), -1, 8, 0);
-	//circle(*mat, *BR, rudius, (Vec3b(255, 0, 0)), -1, 8, 0);
-}
-
-// -------------------------------------------------- //
-// Generate Mesh
-//
-// Pmat:pos mat
-// Imat:Tri index mat
-// i:row #vert
-// j:col #vert
-// -------------------------------------------------- //
-void gen_mesh(EigenMatrixXi* V, EigenMatrixXi* T, Point TL, Point TR, Point BL, Point BR, int NUM_Y, int NUM_X)
-{
-	V->resize(NUM_Y*NUM_X,2);
-	V->setZero();
-
-	T->resize(2*(NUM_Y-1)*(NUM_X-1), 3);
-	T->setZero();
-
-	//std::cout << "V.rows:" << Pmat->rows() << std::endl;
-	//std::cout << "T.rows:" << Imat->rows() << std::endl;
-
-	int dely, delx;
-	dely = (double)(BL.y - TL.y)/(double)(NUM_Y-1.0);
-	delx = (double)(TR.x - TL.x)/(double)(NUM_X-1.0);
-
-	std::cout << "dely:" << dely << std::endl;
-	std::cout << "delx:" << delx << std::endl;
-
-	// generate vert
-	for (int y = 0; y < NUM_Y; y++)
-	{
-		for (int x = 0; x < NUM_X; x++)
-		{
-			//std::cout << "(" << y << "," << x << ")" << std::endl;
-
-			(*V)((NUM_X*y)+x, 0) = TL.y + (y*dely); //y
-			(*V)((NUM_X*y)+x, 1) = TL.x + (x*delx); //x
-
-			//show_point(&src, CornerTL[0] + (y*dely), CornerTL[1] + (x*delx));
-		}
-	}
-
-	// generate tri
-	TriVec.clear();
-	for (int y = 0; y < NUM_Y-1; y++)
-	{
-		for (int x = 0; x < NUM_X-1; x++)
-		{
-			int triIndex;
-
-			// upper tri
-			triIndex = ( (((NUM_X - 1)*y) + x) * 2 )+0;
-			(*T)(triIndex, 0) = (NUM_X*y)     + x;
-			(*T)(triIndex, 1) = (NUM_X*y)     + (x+1);
-			(*T)(triIndex, 2) = (NUM_X*(y+1)) + (x+1);
-			Triangle u_tri(triIndex, (NUM_X*y) + x, (NUM_X*y) + (x + 1), (NUM_X*(y + 1)) + (x + 1));
-			TriVec.push_back(u_tri);
-
-			// down tri
-			triIndex = ((((NUM_X - 1)*y) + x) * 2) + 1;
-			(*T)(triIndex, 0) = (NUM_X*y)     + x;
-			(*T)(triIndex, 1) = (NUM_X*(y+1)) + (x + 1);
-			(*T)(triIndex, 2) = (NUM_X*(y+1)) + x;
-			Triangle d_tri(triIndex, (NUM_X*y) + x, (NUM_X*(y + 1)) + (x + 1), (NUM_X*(y + 1)) + x);
-			TriVec.push_back(d_tri);
-		}
-	}
-	std::cout << "Num TriVec" << TriVec.size() << std::endl;
-}
-
-// -------------------------------------------------- //
-// Draw Vertices
-// -------------------------------------------------- //
-void draw_vert(Mat* mat,EigenMatrixXi* V, int radius, Scalar color)
-{
-	for (int i = 0; i < V->rows(); i++)
-	{
-		Point p;
-		p.x = (*V)(i, 1);	p.y = (*V)(i, 0);
-
-		circle(*mat, p, radius, color, -1, 8, 0);
-	}
-}
-
-// -------------------------------------------------- //
-// Draw Triangle 
-// -------------------------------------------------- //
-void draw_tri(Mat* mat, Point p1, Point p2, Point p3, Scalar color, int thickness)
-{
-	line(*mat, p1, p2, color, thickness, 8, 0);
-	line(*mat, p2, p3, color, thickness, 8, 0);
-	line(*mat, p3, p1, color, thickness, 8, 0);
-}
-
-// -------------------------------------------------- //
-// Draw Mesh
-// -------------------------------------------------- //
-void draw_mesh(Mat* mat, EigenMatrixXi* V, EigenMatrixXi* T, int NUM_Y, int NUM_X)
-{
-	for (int i = 0; i < T->rows(); i++)
-	{
-		Point p1, p2, p3;
-		int   i1, i2, i3;
-
-		i1 = (*T)(i, 0);	i2 = (*T)(i, 1);	i3 = (*T)(i, 2);
-
-		p1.x = (*V)(i1, 1);	p1.y = (*V)(i1, 0);
-		p2.x = (*V)(i2, 1);	p2.y = (*V)(i2, 0);
-		p3.x = (*V)(i3, 1);	p3.y = (*V)(i3, 0);
-
-		draw_tri(mat, p1, p2, p3);
-	}
-}
-
-// -------------------------------------------------- //
 // Compute Interporation Weight
 // -------------------------------------------------- //
-void compute_InterporationWeight(EigenMatrixXi* V, EigenMatrixXi* T, std::vector<EigenMatrixXs>* BVec, Point TL, Point TR, Point BL, Point BR)
-{
-	int PixelNum_Y = BL.y - TL.y;	// ignore bottom line
-	int PixelNum_X = TR.x - TL.x;	// ignore right line
-
-	BVec->clear();
-
-		// for debag
-		//int u_count = 0;	int d_count = 0;
-
-	// loop for tri
-	for (int i = 0; i < TriVec.size(); i++)
-	{
-		int i1 = TriVec[i].get_i1();
-		int i2 = TriVec[i].get_i2();
-		int i3 = TriVec[i].get_i3();
-
-		Point p1, p2, p3;
-		p1.y = (*V)(i1, 0);		p1.x = (*V)(i1, 1);
-		p2.y = (*V)(i2, 0);		p2.x = (*V)(i2, 1);
-		p3.y = (*V)(i3, 0);		p3.x = (*V)(i3, 1);
-
-		int min_y = min(p2.y, p3.y);
-		int min_x = min(p1.x, p3.x);
-		int max_y = min(p1.y, p2.y);
-		int max_x = min(p2.x, p3.x);
-
-		for (int y = p1.y; y <= p3.y; y++)
-		{
-			for (int x = p1.x; x <= p2.x; x++)
-			{
-				Point pixel;
-				pixel.y = y;
-				pixel.x = x;
-
-				Point v12(p2 - p1);
-				Point v23(p3 - p2);
-				Point v31(p1 - p3);
-				Point v1P(pixel - p1);
-				Point v2P(pixel - p2);
-				Point v3P(pixel - p3);
-
-				int Cross121P = cross_product(v12, v1P);
-				int Cross232P = cross_product(v23, v2P);
-				int Cross313P = cross_product(v31, v3P);
-				//std::cout << "121P:" << Cross121P << std::endl;
-				//std::cout << "232P:" << Cross232P << std::endl;
-				//std::cout << "313P:" << Cross313P << std::endl;
-
-				if ((Cross121P>=0) && (Cross232P>=0) && (Cross313P>=0))
-				{
-					ScalarType w1, w2, w3;
-					compute_BarycentricCoordinates(&w1,&w2,&w3,p1,p2,p3,pixel);
-					Pixel pixel(pixel, w1, w2, w3);
-					TriVec[i].push_back_pixel(pixel);
-				}
-			}
-		}
-	}
-
-		// for debag
-		//std::cout << "U_NUM:" << u_count << std::endl;
-		//std::cout << "D_NUM:" << d_count << std::endl;
-
-		for (int i = 0; i < TriVec.size(); i++)
-		{
-			std::cout << "Tri["<< i << "]:" << TriVec[i].get_PixelNum() << std::endl;
-		}
-
-		for (int j = 0; j < TriVec[0].get_PixelNum(); ++j) 
-		{
-			Point pos = TriVec[0].get_PixelPos(j);
-			circle(Gmat00H, pos, 0, Scalar(Vec3b(200, 0, 0)), -1, 8, 0);
-		}
-
-		Point p1, p2, p3;
-		int i = 0;
-		p1.y = (*V)((*T)(i, 0), 0);		p1.x = (*V)((*T)(i, 0), 1);
-		p2.y = (*V)((*T)(i, 1), 0);		p2.x = (*V)((*T)(i, 1), 1);
-		p3.y = (*V)((*T)(i, 2), 0);		p3.x = (*V)((*T)(i, 2), 1);
-		//circle(Gmat00H, p1, 5, Scalar(Vec3b(0, 0, 0)), -1, 8, 0);
-		//circle(Gmat00H, p2, 5, Scalar(Vec3b(0, 0, 0)), -1, 8, 0);
-		//circle(Gmat00H, p3, 5, Scalar(Vec3b(0, 0, 0)), -1, 8, 0);
-}
+//void compute_InterporationWeight(EigenMatrixXi* V, EigenMatrixXi* T, std::vector<EigenMatrixXs>* BVec, Point TL, Point TR, Point BL, Point BR)
+//{
+//	int PixelNum_Y = BL.y - TL.y;	// ignore bottom line
+//	int PixelNum_X = TR.x - TL.x;	// ignore right line
+//
+//	BVec->clear();
+//
+//		// for debag
+//		//int u_count = 0;	int d_count = 0;
+//
+//	// loop for tri
+//	for (int i = 0; i < TriVec.size(); i++)
+//	{
+//		int i1 = TriVec[i].get_i1();
+//		int i2 = TriVec[i].get_i2();
+//		int i3 = TriVec[i].get_i3();
+//
+//		Point p1, p2, p3;
+//		p1.y = (*V)(i1, 0);		p1.x = (*V)(i1, 1);
+//		p2.y = (*V)(i2, 0);		p2.x = (*V)(i2, 1);
+//		p3.y = (*V)(i3, 0);		p3.x = (*V)(i3, 1);
+//
+//		int min_y = min(p2.y, p3.y);
+//		int min_x = min(p1.x, p3.x);
+//		int max_y = min(p1.y, p2.y);
+//		int max_x = min(p2.x, p3.x);
+//
+//		for (int y = p1.y; y <= p3.y; y++)
+//		{
+//			for (int x = p1.x; x <= p2.x; x++)
+//			{
+//				Point pixel;
+//				pixel.y = y;
+//				pixel.x = x;
+//
+//				Point v12(p2 - p1);
+//				Point v23(p3 - p2);
+//				Point v31(p1 - p3);
+//				Point v1P(pixel - p1);
+//				Point v2P(pixel - p2);
+//				Point v3P(pixel - p3);
+//
+//				int Cross121P = cross_product(v12, v1P);
+//				int Cross232P = cross_product(v23, v2P);
+//				int Cross313P = cross_product(v31, v3P);
+//				//std::cout << "121P:" << Cross121P << std::endl;
+//				//std::cout << "232P:" << Cross232P << std::endl;
+//				//std::cout << "313P:" << Cross313P << std::endl;
+//
+//				if ((Cross121P>=0) && (Cross232P>=0) && (Cross313P>=0))
+//				{
+//					ScalarType w1, w2, w3;
+//					compute_BarycentricCoordinates(&w1,&w2,&w3,p1,p2,p3,pixel);
+//					Pixel pixel(pixel, w1, w2, w3);
+//					TriVec[i].push_back_pixel(pixel);
+//				}
+//			}
+//		}
+//	}
+//
+//		// for debag
+//		//std::cout << "U_NUM:" << u_count << std::endl;
+//		//std::cout << "D_NUM:" << d_count << std::endl;
+//
+//		/*for (int i = 0; i < TriVec.size(); i++)
+//		{
+//			std::cout << "Tri["<< i << "]:" << TriVec[i].get_PixelNum() << std::endl;
+//		}*/
+//
+//		for (int j = 0; j < TriVec[0].get_PixelNum(); ++j) 
+//		{
+//			Point pos = TriVec[0].get_PixelPos(j);
+//			circle(Gmat00H, pos, 0, Scalar(Vec3b(200, 0, 0)), -1, 8, 0);
+//		}
+//
+//		Point p1, p2, p3;
+//		int i = 0;
+//		p1.y = (*V)((*T)(i, 0), 0);		p1.x = (*V)((*T)(i, 0), 1);
+//		p2.y = (*V)((*T)(i, 1), 0);		p2.x = (*V)((*T)(i, 1), 1);
+//		p3.y = (*V)((*T)(i, 2), 0);		p3.x = (*V)((*T)(i, 2), 1);
+//		//circle(Gmat00H, p1, 5, Scalar(Vec3b(0, 0, 0)), -1, 8, 0);
+//		//circle(Gmat00H, p2, 5, Scalar(Vec3b(0, 0, 0)), -1, 8, 0);
+//		//circle(Gmat00H, p3, 5, Scalar(Vec3b(0, 0, 0)), -1, 8, 0);
+//}
 
 // -------------------------------------------------- //
 // Compute Global Transformation

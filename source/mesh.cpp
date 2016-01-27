@@ -20,8 +20,12 @@ Mesh::Mesh(cv::Point _TL, cv::Point _TR, cv::Point _BL, cv::Point _BR, int _num_
 
 void Mesh::init() 
 {
+	width  = TR.x - TL.x + 1;
+	height = BL.y - TL.y + 1;
+
 	gen_vert();
 	gen_tri();
+	gen_pixel();
 }
 
 void Mesh::detect_corners(cv::Mat* mat)
@@ -106,9 +110,23 @@ void Mesh::gen_vert()
 	dely = (double)(BL.y - TL.y) / (double)(num_Y - 1.0);
 	delx = (double)(TR.x - TL.x) / (double)(num_X - 1.0);
 
-	for (int y = 0; y < num_Y; y++)
+	//for (int y = 0; y < num_Y; y++)
+	//{
+	//	for (int x = 0; x < num_X; x++)
+	//	{
+	//		//std::cout << "(" << y << "," << x << ")" << std::endl;
+	//		cv::Point vert;
+	//		vert.y = TL.y + (y*dely); //y
+	//		vert.x = TL.x + (x*delx); //x
+
+	//		VertVec.push_back(vert);
+	//	}
+	//}
+
+	// to delete round error
+	for (int y = 0; y < num_Y-1; y++)
 	{
-		for (int x = 0; x < num_X; x++)
+		for (int x = 0; x < num_X-1; x++)
 		{
 			//std::cout << "(" << y << "," << x << ")" << std::endl;
 			cv::Point vert;
@@ -117,7 +135,29 @@ void Mesh::gen_vert()
 
 			VertVec.push_back(vert);
 		}
+
+		cv::Point vert;
+		vert.y = TL.y + (y*dely); //y
+		vert.x = TR.x; //x
+
+		VertVec.push_back(vert);
 	}
+
+	for (int x = 0; x < num_X - 1; x++)
+	{
+		//std::cout << "(" << y << "," << x << ")" << std::endl;
+		cv::Point vert;
+		vert.y = BL.y; //y
+		vert.x = TL.x + (x*delx); //x
+
+		VertVec.push_back(vert);
+	}
+
+	cv::Point vert;
+	vert.y = BL.y; //y
+	vert.x = TR.x; //x
+
+	VertVec.push_back(vert);
 
 	std::cout << "#Vert: " << VertVec.size() <<std::endl;
 }
@@ -147,7 +187,78 @@ void Mesh::gen_tri()
 			TriVec.push_back(d_tri);
 		}
 	}
-	std::cout << "#Tri:" << TriVec.size() << std::endl;
+	std::cout << "#Tri: " << TriVec.size() << std::endl;
+}
+
+void Mesh::gen_pixel()
+{
+	std::cout << "Wight Computing..." << std::endl;
+
+	std::cout << "height: "<< height << std::endl;
+	std::cout << "width: " << width << std::endl;
+	std::cout << "height*width: " << height*width << std::endl;
+	std::vector<bool> flagVec(width*height, false);
+
+	// loop for all pixel
+	PixelVec.clear();
+
+	for (int y = TL.y; y < BL.y + 1; y++)
+	{
+		for (int x = TL.x; x < TR.x + 1; x++)
+		{
+			cv::Point point;
+			point.y = y;	point.x = x;
+
+			Pixel pixel(point);
+
+			// loop for tri
+			for (int i = 0; i < TriVec.size(); i++)
+			{
+				int i1, i2, i3;
+				cv::Point p1, p2, p3;
+
+				i1 = TriVec[i].get_i1();	i2 = TriVec[i].get_i2();	i3 = TriVec[i].get_i3();
+				p1 = VertVec[i1];			p2 = VertVec[i2];			p3 = VertVec[i3];
+
+				cv::Point v12(p2 - p1);
+				cv::Point v23(p3 - p2);
+				cv::Point v31(p1 - p3);
+				cv::Point v1P(point - p1);
+				cv::Point v2P(point - p2);
+				cv::Point v3P(point - p3);
+
+				int Cross121P = cross_product(v12, v1P);
+				int Cross232P = cross_product(v23, v2P);
+				int Cross313P = cross_product(v31, v3P);
+				
+				if (((Cross121P >= 0) && (Cross232P >= 0) && (Cross313P >= 0)) && (flagVec[(width*(y-TL.y)) + (x-TL.x)] == false))
+				{
+					pixel.compute_BarycentricCoordinates(p1, p2, p3);
+					pixel.set_tri_index(i);
+					TriVec[i].set_pixel_index((width*(y - TL.y)) + (x - TL.x));
+
+					flagVec[(width*(y-TL.y)) + (x-TL.x)] = true;
+				}
+
+			}
+
+			PixelVec.push_back(pixel);
+		}
+	}
+
+	// check
+	int count = 0;
+	for (int i = 0; i < flagVec.size(); i++)
+	{
+		if (flagVec[i] == false)
+		{
+			std::cout << "Vret["<< i << "] is not included" << std::endl;
+			count += 1;
+		}
+	}
+	std::cout << "#Not Included Vret:" << count << std::endl;
+
+	std::cout << "#Pixel: " << PixelVec.size() << std::endl;
 }
 
 // -------------------------------------------------- //
@@ -188,4 +299,12 @@ void Mesh::draw_mesh(cv::Mat* mat)
 	{
 		draw_tri(mat, i);
 	}
+}
+
+// -------------------------------------------------- //
+// Compute Cross Product
+// -------------------------------------------------- //
+int Mesh::cross_product(cv::Point p1, cv::Point p2)
+{
+	return ((p1.x*p2.y) - (p1.y*p2.x));
 }

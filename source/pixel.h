@@ -20,12 +20,25 @@ public:
 
 protected:
 	cv::Point pos;
+	int tri_index;
 	ScalarType w1, w2, w3;
 
 public:
+// core func
+	void compute_BarycentricCoordinates(cv::Point t1, cv::Point t2, cv::Point t3);
+
+public:
+// set methods
 	void set_w1(ScalarType _w1) { w1 = _w1; }
 	void set_w2(ScalarType _w2) { w2 = _w2; }
 	void set_w3(ScalarType _w3) { w3 = _w3; }
 
+	void set_tri_index(int _i) { tri_index = _i; }
+
+public:
+// get methods
 	cv::Point get_pos() { return pos; }
+	ScalarType get_w1() { return w1; }
+	ScalarType get_w2() { return w2; }
+	ScalarType get_w3() { return w3; }
 };
